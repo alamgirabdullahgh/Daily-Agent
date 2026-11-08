@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Daily Agent</string>
+    <string name="a11y_desc">আপডেটের নিশ্চিত-বোতাম নিজে চাপে এবং ভয়েস-কমান্ডে অন্য অ্যাপ চালায়।</string>
+</resources>
