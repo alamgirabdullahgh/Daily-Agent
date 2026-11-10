@@ -41,6 +41,7 @@ class AgentAccessibility : AccessibilityService() {
     private var lastClick = 0L
     @Volatile private var updateClickAt = 0L
     @Volatile private var openedAt = 0L
+    @Volatile private var learned: String? = null   // অচেনা নামের যে ইনস্টলারে আমরা আপডেট চেপেছি: পরের "Open" পর্দাও চেনার জন্য
 
     private val pkgRx = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
@@ -50,8 +51,8 @@ class AgentAccessibility : AccessibilityService() {
             if (System.currentTimeMillis() - updateClickAt > 180_000L) return
             main.postDelayed({
                 if (System.currentTimeMillis() - openedAt < 20_000L) return@postDelayed   // "Open" আগেই চাপা হয়েছে
-                launch(p)
-            }, 5000)
+                openAndVerify(p, 0)
+            }, 2000)
         }
     }
 
@@ -78,6 +79,13 @@ class AgentAccessibility : AccessibilityService() {
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         val pkg = e?.packageName?.toString() ?: return
         if (!Cfg.autoUpdate(this) || pkg == packageName) return
+        // ব্যবহারকারী নিজে "Update/Install" চাপলেও পরে অ্যাপ খোলার জন্য সময় মনে রাখি
+        if (e.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            val src = e.source
+            val l = (e.text?.joinToString(" ") ?: src?.text?.toString() ?: "").trim().lowercase()
+            if (isInstallerPkg(pkg) && l in OK) updateClickAt = System.currentTimeMillis()
+            return
+        }
         // নির্মাতাভেদে ইনস্টলারের প্যাকেজ-নাম আলাদা: চেনা/নামে "installer" থাকা প্যাকেজের সব ইভেন্টে দেখি;
         // অচেনা প্যাকেজের ক্ষেত্রে শুধু নতুন জানালা খুললে (ডায়ালগের লেখা দেখে চিনি)
         val known = isInstallerPkg(pkg)
@@ -90,7 +98,7 @@ class AgentAccessibility : AccessibilityService() {
     }
 
     private fun isInstallerPkg(p: String) =
-        p in INSTALLERS || p.contains("packageinstaller") || p.contains("appdetail") || (p.contains("installer") && !p.contains("vending"))
+        p in INSTALLERS || p == learned || p.contains("packageinstaller") || p.contains("appdetail") || (p.contains("installer") && !p.contains("vending"))
 
     private fun label(b: AccessibilityNodeInfo) = (b.text ?: b.contentDescription)?.toString()?.trim()?.lowercase() ?: ""
 
@@ -129,7 +137,7 @@ class AgentAccessibility : AccessibilityService() {
             val ok = btns.firstOrNull { label(it) in OK }
             if (ok != null) {
                 val done = click(ok)
-                if (done) { lastClick = now; updateClickAt = now }
+                if (done) { lastClick = now; updateClickAt = now; if (!installer) learned = rp }
                 note(done)
                 return done
             }
@@ -216,6 +224,15 @@ class AgentAccessibility : AccessibilityService() {
         val dm = resources.displayMetrics
         val p = Path().apply { moveTo(dm.widthPixels / 2f, dm.heightPixels * 0.85f); lineTo(dm.widthPixels / 2f, dm.heightPixels * 0.2f) }
         dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p, 0, 300)).build(), null, null)
+    }
+
+    /** অ্যাপ খোলে; সামনে না এলে ২-৩ সেকেন্ড পরপর আরও ৩ বার চেষ্টা করে */
+    private fun openAndVerify(p: String, n: Int) {
+        launch(p)
+        if (n >= 3) return
+        main.postDelayed({
+            if (currentPackage() != p && System.currentTimeMillis() - openedAt >= 20_000L) openAndVerify(p, n + 1)
+        }, 2500)
     }
 
     fun launch(pkg: String): Boolean {
