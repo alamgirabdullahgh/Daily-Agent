@@ -136,7 +136,7 @@ class AgentAccessibility : AccessibilityService() {
             val pi = (e.parcelableData as? android.app.Notification)?.contentIntent
             if (pi != null) {
                 val opts = android.app.ActivityOptions.makeBasic()
-                if (android.os.Build.VERSION.SDK_INT >= 34) opts.setPendingIntentBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_ALLOWED)
+                if (android.os.Build.VERSION.SDK_INT >= 34) opts.setPendingIntentBackgroundActivityStartMode(1)
                 pi.send(this, 0, null, null, null, null, opts.toBundle())
                 ok = true
             }
