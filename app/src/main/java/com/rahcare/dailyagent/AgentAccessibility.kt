@@ -43,6 +43,8 @@ class AgentAccessibility : AccessibilityService() {
     private var lastClick = 0L
     @Volatile private var updateClickAt = 0L
     @Volatile private var openedAt = 0L
+    @Volatile private var attempts = 0          // একই ডায়ালগে কতবার চেপেছি (ফোন চাপ না নিলে আবার চেষ্টার জন্য)
+    @Volatile private var lastDump = ""
     @Volatile private var learned: String? = null   // অচেনা নামের যে ইনস্টলারে আমরা আপডেট চেপেছি: পরের "Open" পর্দাও চেনার জন্য
 
     private val pkgRx = object : BroadcastReceiver() {
@@ -58,8 +60,20 @@ class AgentAccessibility : AccessibilityService() {
         }
     }
 
+    // কিছু ফোনে ইনস্টলার-ডায়ালগের ইভেন্ট সার্ভিসের কাছে পৌঁছায় না; তাই পর্দা জাগা থাকলে প্রতি ২.৫ সেকেন্ডে নিজে একবার দেখে নিই
+    private val poll = object : Runnable {
+        override fun run() {
+            try {
+                val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+                if (Cfg.autoUpdate(this@AgentAccessibility) && pm.isInteractive) scan(false)
+            } catch (_: Exception) {}
+            main.postDelayed(this, 2500)
+        }
+    }
+
     override fun onServiceConnected() {
         inst = this
+        main.removeCallbacks(poll); main.postDelayed(poll, 2500)
         try {
             registerReceiver(pkgRx, IntentFilter(Intent.ACTION_PACKAGE_REPLACED).apply { addDataScheme("package") })
         } catch (_: Exception) {}
@@ -72,6 +86,7 @@ class AgentAccessibility : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         inst = null
+        main.removeCallbacks(poll)
         try { unregisterReceiver(pkgRx) } catch (_: Exception) {}
         return super.onUnbind(intent)
     }
@@ -123,6 +138,12 @@ class AgentAccessibility : AccessibilityService() {
         return if (n.className?.toString()?.endsWith("Button") == true && n.isEnabled) n else null
     }
 
+    private fun tapNode(n: AccessibilityNodeInfo): Boolean {
+        val c = clickableOf(n) ?: n
+        val r = Rect(); c.getBoundsInScreen(r)
+        return tap(r.centerX(), r.centerY())
+    }
+
     private fun pressNode(n: AccessibilityNodeInfo): Boolean {
         val c = clickableOf(n) ?: return false
         if (c.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
@@ -153,12 +174,23 @@ class AgentAccessibility : AccessibilityService() {
                 if (!prompt || !hasCancel) continue
             }
             Cfg.p(this).edit().putString("last_inst", rp + " · " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(now))).apply()
+            // ডায়ালগে আসলে কী কী লেখা/বোতাম দেখা গেল — অ্যাপের মূল পর্দায় দেখানোর জন্য (কেন চাপছে না বুঝতে)
+            val dump = rp + " | " + labs.take(14).joinToString(" / ") { it.label + if (clickableOf(it.node) != null) "*" else "" }
+            if (dump != lastDump) { lastDump = dump; Cfg.p(this).edit().putString("last_dump", dump).apply() }
             val open = labs.firstOrNull { it.label in OPEN && clickableOf(it.node) != null }
             if (open != null && pressNode(open.node)) { lastClick = now; openedAt = now; note(true); return true }
             val ok = labs.firstOrNull { it.label in OK && clickableOf(it.node) != null }
             if (ok != null) {
-                val done = pressNode(ok.node)
-                if (done) { lastClick = now; updateClickAt = now; if (!installer) learned = rp }
+                if (now - lastClick > 10_000L) attempts = 0
+                if (attempts >= 5) return false
+                // জোড় বার ACTION_CLICK, বিজোড় বার আঙুলের ট্যাপ: ফোন এক পথে চাপ না নিলে অন্য পথে
+                val done = if (attempts % 2 == 1) tapNode(ok.node) else pressNode(ok.node)
+                attempts++
+                if (done) {
+                    lastClick = now; updateClickAt = now; if (!installer) learned = rp
+                    // ডায়ালগ স্থির থাকলে আর নতুন ইভেন্ট আসে না; তাই চাপের পরেও কিছুক্ষণ পরপর আবার দেখি (ডায়ালগ সরে গেলে কিছু হয় না)
+                    for (d in longArrayOf(1500, 3000, 4500, 6500)) main.postDelayed({ if (Cfg.autoUpdate(this)) scan(true) }, d)
+                }
                 note(done)
                 return done
             }
