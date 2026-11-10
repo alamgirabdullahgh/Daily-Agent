@@ -31,6 +31,9 @@ class AgentAccessibility : AccessibilityService() {
         )
         // পুরো মিল। "install anyway" ইচ্ছা করে বাদ — ওটা নিরাপত্তা-সতর্কতা, নিজে চাপা হয় না
         private val OK = setOf("install", "update", "ইনস্টল", "আপডেট", "ইনস্টল করুন", "আপডেট করুন", "update app")
+        private val CANCEL = setOf("cancel", "বাতিল", "বাতিল করুন", "না", "no")
+        private val PROMPTS = listOf("update this app", "install this app", "update this application", "install this application",
+            "do you want to install", "do you want to update", "আপডেট করতে চান", "ইনস্টল করতে চান")
         private val OPEN = setOf("open", "খুলুন", "ওপেন", "চালু করুন", "খুলুন।")
     }
 
@@ -74,18 +77,67 @@ class AgentAccessibility : AccessibilityService() {
 
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         val pkg = e?.packageName?.toString() ?: return
-        if (pkg !in INSTALLERS || !Cfg.autoUpdate(this)) return
-        val now = System.currentTimeMillis()
-        if (now - lastClick < 1200) return
-        val root = (try { rootInActiveWindow } catch (_: Exception) { null }) ?: return
-        val btns = ArrayList<AccessibilityNodeInfo>()
-        collectButtons(root, btns)
-        fun label(b: AccessibilityNodeInfo) = (b.text ?: b.contentDescription)?.toString()?.trim()?.lowercase() ?: ""
-        val open = btns.firstOrNull { label(it) in OPEN }
-        if (open != null && click(open)) { lastClick = now; openedAt = now; return }
-        val ok = btns.firstOrNull { label(it) in OK } ?: return
-        if (click(ok)) { lastClick = now; updateClickAt = now }
+        if (!Cfg.autoUpdate(this) || pkg == packageName) return
+        // নির্মাতাভেদে ইনস্টলারের প্যাকেজ-নাম আলাদা: চেনা/নামে "installer" থাকা প্যাকেজের সব ইভেন্টে দেখি;
+        // অচেনা প্যাকেজের ক্ষেত্রে শুধু নতুন জানালা খুললে (ডায়ালগের লেখা দেখে চিনি)
+        val known = isInstallerPkg(pkg)
+        if (!known && e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (scan(known)) return
+        // পর্দা আঁকতে দেরি হলে বোতাম তখনো থাকে না: কিছুক্ষণ পরপর আবার দেখি
+        if (known || e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            for (d in longArrayOf(350, 900, 1800, 3200)) main.postDelayed({ if (Cfg.autoUpdate(this)) scan(known) }, d)
+        }
     }
+
+    private fun isInstallerPkg(p: String) =
+        p in INSTALLERS || p.contains("packageinstaller") || p.contains("appdetail") || (p.contains("installer") && !p.contains("vending"))
+
+    private fun label(b: AccessibilityNodeInfo) = (b.text ?: b.contentDescription)?.toString()?.trim()?.lowercase() ?: ""
+
+    private fun allText(n: AccessibilityNodeInfo?, sb: StringBuilder, depth: Int = 0) {
+        if (n == null || depth > 30 || sb.length > 4000) return
+        n.text?.let { sb.append(it).append('\n') }
+        for (i in 0 until n.childCount) allText(n.getChild(i), sb, depth + 1)
+    }
+
+    /** পর্দার সব জানালা দেখে ইনস্টল/আপডেটের নিশ্চিত-ডায়ালগ খুঁজে বোতাম চাপে। চাপা হলে true */
+    private fun scan(knownPkg: Boolean): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastClick < 1200) return true
+        val roots = ArrayList<AccessibilityNodeInfo>()
+        try { windows?.forEach { w -> w.root?.let { roots.add(it) } } } catch (_: Exception) {}
+        if (roots.isEmpty()) (try { rootInActiveWindow } catch (_: Exception) { null })?.let { roots.add(it) }
+        for (root in roots) {
+            val rp = root.packageName?.toString() ?: continue
+            if (rp == packageName) continue
+            val installer = isInstallerPkg(rp)
+            val btns = ArrayList<AccessibilityNodeInfo>()
+            collectButtons(root, btns)
+            if (btns.isEmpty()) continue
+            if (!installer) {
+                // অচেনা প্যাকেজ: শুধু "Do you want to update this app?" ধরনের লেখা + Cancel বোতাম থাকলে (Play Store বাদ)
+                if (rp.contains("vending")) continue
+                val sb = StringBuilder(); allText(root, sb)
+                val t = sb.toString().lowercase()
+                val prompt = PROMPTS.any { t.contains(it) }
+                val hasCancel = btns.any { label(it) in CANCEL }
+                if (!prompt || !hasCancel) continue
+            }
+            Cfg.p(this).edit().putString("last_inst", rp + " · " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(now))).apply()
+            val open = btns.firstOrNull { label(it) in OPEN }
+            if (open != null && click(open)) { lastClick = now; openedAt = now; note(true); return true }
+            val ok = btns.firstOrNull { label(it) in OK }
+            if (ok != null) {
+                val done = click(ok)
+                if (done) { lastClick = now; updateClickAt = now }
+                note(done)
+                return done
+            }
+        }
+        return false
+    }
+
+    private fun note(done: Boolean) { Cfg.p(this).edit().putBoolean("last_inst_ok", done).apply() }
 
     private fun collectButtons(n: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
         if (n == null) return

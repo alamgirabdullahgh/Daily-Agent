@@ -75,6 +75,7 @@ class MainActivity : Activity() {
         val bat = (getSystemService(POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(packageName)
         st.text = "মাইক অনুমতি: ${if (mic) "✔" else "✘"}\nঅ্যাক্সেসিবিলিটি: ${if (a11y) "✔ চালু" else "✘ বন্ধ"}\n" +
             "ব্যাটারি সীমা মুক্ত: ${if (bat) "✔" else "✘"}\nভয়েস মডেল: ${if (WakeWord.ready(this)) "✔ আছে" else "এখনো নামেনি (শোনা চালু করলে নামবে)"}\n" +
+            "আপডেট-ডায়ালগ শেষ দেখা: ${Cfg.p(this).getString("last_inst", null)?.let { it + if (Cfg.p(this).getBoolean("last_inst_ok", false)) " (চাপা ✔)" else " (চাপা যায়নি ✘)" } ?: "এখনো দেখা যায়নি"}\n" +
             "Gemini কী: ${if (Cfg.key(this).isNotBlank()) "✔" else "✘ নেই"}\nঅবস্থা: ${if (AgentService.running) AgentService.status.ifBlank { "চলছে" } else "বন্ধ"}\n"
         bListen.text = if (AgentService.running) "⏹ শোনা বন্ধ করুন" else "▶ শোনা চালু করুন ('My Agent')"
         bLang.text = "কমান্ডের ভাষা: " + if (Cfg.lang(this) == "bn-BD") "বাংলা (ট্যাপে ইংরেজি)" else "English (ট্যাপে বাংলা)"
