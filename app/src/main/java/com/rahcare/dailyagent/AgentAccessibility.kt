@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 
 /**
  * দুই কাজ:
@@ -111,6 +112,7 @@ class AgentAccessibility : AccessibilityService() {
         val known = isInstallerPkg(pkg)
         if (!known && e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         if (scan(known)) return
+        if (known) dbg("ইনস্টলার-ঘটনা এসেছে, কিন্তু বোতাম মেলেনি · জানালা: $lastRoots")
         // পর্দা আঁকতে দেরি হলে বোতাম তখনো থাকে না: কিছুক্ষণ পরপর আবার দেখি
         if (known || e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             for (d in longArrayOf(350, 900, 1800, 3200)) main.postDelayed({ if (Cfg.autoUpdate(this)) scan(known) }, d)
@@ -186,6 +188,18 @@ class AgentAccessibility : AccessibilityService() {
         return tap(r.centerX(), r.centerY())
     }
 
+    @Volatile private var lastDbgAt = 0L
+    @Volatile private var lastDbgMsg = ""
+    @Volatile private var lastRoots = "কোনোটাই নয়"
+    /** ডায়ালগের ওপরেই ছোট বার্তা (Toast): Agent কী দেখল ও কী করল — অ্যাপ খুলে দেখার সুযোগ না থাকায় কারণ খুঁজতে */
+    private fun dbg(m: String) {
+        if (!Cfg.p(this).getBoolean("dbg", true)) return
+        val now = System.currentTimeMillis()
+        if (now - lastDbgAt < 1500L || (m == lastDbgMsg && now - lastDbgAt < 5000L)) return
+        lastDbgAt = now; lastDbgMsg = m
+        try { Toast.makeText(this, "Agent: $m", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+    }
+
     /** পর্দার সব জানালা দেখে ইনস্টল/আপডেটের নিশ্চিত-ডায়ালগ খুঁজে বোতাম চাপে। চাপা হলে true */
     private fun scan(knownPkg: Boolean): Boolean {
         val now = System.currentTimeMillis()
@@ -193,13 +207,14 @@ class AgentAccessibility : AccessibilityService() {
         val roots = ArrayList<AccessibilityNodeInfo>()
         try { windows?.forEach { w -> w.root?.let { roots.add(it) } } } catch (_: Exception) {}
         if (roots.isEmpty()) (try { rootInActiveWindow } catch (_: Exception) { null })?.let { roots.add(it) }
+        lastRoots = roots.joinToString(",") { (it.packageName?.toString() ?: "?").substringAfterLast('.') }.ifBlank { "কোনোটাই নয়" }
         for (root in roots) {
             val rp = root.packageName?.toString() ?: continue
             if (rp == packageName) continue
             val installer = isInstallerPkg(rp)
             val labs = ArrayList<Lab>()
             collectLabels(root, labs)
-            if (labs.isEmpty()) continue
+            if (labs.isEmpty()) { if (installer) dbg("ইনস্টলার জানালা আছে কিন্তু ভেতরের লেখা পড়া যাচ্ছে না (নোড=${root.childCount})"); continue }
             if (!installer) {
                 // অচেনা প্যাকেজ: শুধু "Do you want to update this app?" ধরনের লেখা + Cancel বোতাম থাকলে (Play Store বাদ)
                 if (rp.contains("vending")) continue
@@ -217,10 +232,12 @@ class AgentAccessibility : AccessibilityService() {
             val ok = labs.firstOrNull { it.label in OK && clickableOf(it.node) != null }
             if (ok != null) {
                 if (now - lastClick > 10_000L) attempts = 0
-                if (attempts >= 5) return false
+                if (attempts >= 5) { dbg("৫ বার চেপেও ডায়ালগ যায়নি — ফোন চাপ নিচ্ছে না"); return false }
                 // জোড় বার ACTION_CLICK, বিজোড় বার আঙুলের ট্যাপ: ফোন এক পথে চাপ না নিলে অন্য পথে
                 val done = if (attempts % 2 == 1) tapNode(ok.node) else pressNode(ok.node)
+                val how = if ((attempts) % 2 == 0) "ACTION_CLICK" else "ট্যাপ"
                 attempts++
+                dbg("Update পেয়েছি, চাপলাম ($how) → ${if (done) "ফোন নিল ✔" else "ব্যর্থ ✘"} · লেখা: ${labs.take(6).joinToString(" / ") { it.label }}")
                 if (done) {
                     lastClick = now; updateClickAt = now; if (!installer) learned = rp
                     // ডায়ালগ স্থির থাকলে আর নতুন ইভেন্ট আসে না; তাই চাপের পরেও কিছুক্ষণ পরপর আবার দেখি (ডায়ালগ সরে গেলে কিছু হয় না)
@@ -229,6 +246,7 @@ class AgentAccessibility : AccessibilityService() {
                 note(done)
                 return done
             }
+            if (installer) dbg("ডায়ালগ দেখেছি, কিন্তু Update/Install বোতাম পাইনি · ${dump.substringAfter("| ").take(110)}")
         }
         return false
     }
