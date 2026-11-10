@@ -149,7 +149,12 @@ class AgentAccessibility : AccessibilityService() {
     private fun isInstallerPkg(p: String) =
         p in INSTALLERS || p == learned || p.contains("packageinstaller") || p.contains("appdetail") || (p.contains("installer") && !p.contains("vending"))
 
-    private fun norm(c: CharSequence?): String = c?.toString()?.trim()?.lowercase()?.trim('.', '।', '!', ' ', '\u00a0') ?: ""
+    private val countdownRx = Regex("\\s*[(（\\[]?\\s*\\d+\\s*(s|sec|secs|সে|সেকেন্ড)?\\s*[)）\\]]?$")
+    /** লেখা ছোট হাতের করে ছাঁটে; OPPO/Realme-র গণনা-বোতাম ("Update (3s)", "আপডেট 5") থেকে শেষের সংখ্যা বাদ দিয়ে "update" করে */
+    private fun norm(c: CharSequence?): String {
+        val t = c?.toString()?.trim()?.lowercase()?.trim('.', '।', '!', ' ', '\u00a0') ?: return ""
+        return t.replace(countdownRx, "").trim('.', '।', '!', ' ', '\u00a0')
+    }
 
     private class Lab(val node: AccessibilityNodeInfo, val label: String)
 
