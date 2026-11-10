@@ -103,7 +103,13 @@ class SelfUpdateResult : BroadcastReceiver() {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                 @Suppress("DEPRECATION")
                 val ui = i.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
-                if (ui != null) try { c.startActivity(ui.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+                if (ui != null) {
+                    ui.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    // অ্যাপ ব্যাকগ্রাউন্ডে থাকলে রিসিভার থেকে সরাসরি পর্দা খোলা আটকায়; অ্যাক্সেসিবিলিটি সার্ভিস চালু থাকলে তার মাধ্যমে খুলি
+                    val svc = AgentAccessibility.inst
+                    try { if (svc != null) svc.startActivity(ui) else c.startActivity(ui) }
+                    catch (_: Exception) { try { c.startActivity(ui) } catch (_: Exception) {} }
+                }
             }
             PackageInstaller.STATUS_SUCCESS -> {}
             else -> {

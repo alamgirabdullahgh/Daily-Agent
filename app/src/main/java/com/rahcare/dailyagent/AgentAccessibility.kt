@@ -96,6 +96,7 @@ class AgentAccessibility : AccessibilityService() {
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         val pkg = e?.packageName?.toString() ?: return
         if (pkg == packageName) return
+        if (e.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) { onNotification(pkg, e); return }
         if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) lastEvt = pkg + " · " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
         if (!Cfg.autoUpdate(this)) return
         // ব্যবহারকারী নিজে "Update/Install" চাপলেও পরে অ্যাপ খোলার জন্য সময় মনে রাখি
@@ -114,6 +115,35 @@ class AgentAccessibility : AccessibilityService() {
         if (known || e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             for (d in longArrayOf(350, 900, 1800, 3200)) main.postDelayed({ if (Cfg.autoUpdate(this)) scan(known) }, d)
         }
+    }
+
+    /**
+     * ব্যাকগ্রাউন্ডে/বন্ধ থাকা সহোদর অ্যাপ (com.rahcare.*, যেমন Daily Browser) ইনস্টল-নিশ্চিত পর্দা নিজে খুলতে পারে না,
+     * শুধু "চাপুন — ইনস্টল নিশ্চিত করুন" নোটিফিকেশন রাখে। এখানে সেই নোটিফিকেশন ধরে তার চাপ-ইন্টেন্ট নিজে পাঠাই,
+     * ফলে ডায়ালগ পর্দায় আসে আর scan() বোতাম চাপতে পারে।
+     */
+    @Volatile private var lastNotifOpen = 0L
+    private fun onNotification(pkg: String, e: AccessibilityEvent) {
+        if (!Cfg.autoUpdate(this) || !pkg.startsWith("com.rahcare.")) return
+        val t = (e.text?.joinToString(" ") ?: "")
+        if (!t.contains("ইনস্টল নিশ্চিত করুন")) return
+        val now = System.currentTimeMillis()
+        if (now - lastNotifOpen < 3000L) return
+        lastNotifOpen = now
+        val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(now))
+        var ok = false
+        try {
+            val pi = (e.parcelableData as? android.app.Notification)?.contentIntent
+            if (pi != null) {
+                val opts = android.app.ActivityOptions.makeBasic()
+                if (android.os.Build.VERSION.SDK_INT >= 34) opts.setPendingIntentBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_ALLOWED)
+                pi.send(this, 0, null, null, null, null, opts.toBundle())
+                ok = true
+            }
+        } catch (_: Exception) {}
+        Cfg.p(this).edit().putString("last_notif", pkg + " · " + stamp + if (ok) " (পর্দা খোলা হলো ✔)" else " (খোলা যায়নি ✘)").apply()
+        // ডায়ালগ আসতে দেরি হতে পারে; scan() আগের মতো পোল ও পুনরায় চেষ্টায় বোতাম ধরবে
+        for (d in longArrayOf(800, 1800, 3000, 4500)) main.postDelayed({ if (Cfg.autoUpdate(this)) scan(true) }, d)
     }
 
     private fun isInstallerPkg(p: String) =

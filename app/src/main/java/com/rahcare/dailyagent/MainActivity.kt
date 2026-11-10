@@ -99,6 +99,7 @@ class MainActivity : Activity() {
         st.text = "মাইক অনুমতি: ${if (mic) "✔" else "✘"}\nঅ্যাক্সেসিবিলিটি: ${if (a11y) "✔ চালু" else "✘ বন্ধ"}\nসার্ভিস সংযুক্ত: ${if (AgentAccessibility.inst != null) "✔" else "✘ নয় (অ্যাক্সেসিবিলিটি বন্ধ করে আবার চালু করুন)"}\nশেষ দেখা জানালা: ${AgentAccessibility.lastEvt.ifBlank { "এখনো কিছু আসেনি" }}\n" +
             "ব্যাটারি সীমা মুক্ত: ${if (bat) "✔" else "✘"}\nভয়েস মডেল: ${if (WakeWord.ready(this)) "✔ আছে" else "এখনো নামেনি (শোনা চালু করলে নামবে)"}\n" +
             "আপডেট-ডায়ালগ শেষ দেখা: ${Cfg.p(this).getString("last_inst", null)?.let { it + if (Cfg.p(this).getBoolean("last_inst_ok", false)) " (চাপা ✔)" else " (চাপা যায়নি ✘)" } ?: "এখনো দেখা যায়নি"}\n" +
+            "নোটিফিকেশন থেকে নিশ্চিত-পর্দা খোলা: ${Cfg.p(this).getString("last_notif", null) ?: "এখনো হয়নি"}\n" +
             "ডায়ালগে যা দেখা গেছে: ${Cfg.p(this).getString("last_dump", null) ?: "এখনো কিছু নয়"}\n" +
             "Gemini কী: ${if (Cfg.key(this).isNotBlank()) "✔" else "✘ নেই"}\nঅবস্থা: ${if (AgentService.running) AgentService.status.ifBlank { "চলছে" } else "বন্ধ"}\n"
         bListen.text = if (AgentService.running) "⏹ শোনা বন্ধ করুন" else "▶ শোনা চালু করুন ('My Agent')"
