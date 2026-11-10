@@ -96,7 +96,7 @@ class MainActivity : Activity() {
         val a11y = (Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: "").contains("$packageName/")
         val mic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val bat = (getSystemService(POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(packageName)
-        st.text = "মাইক অনুমতি: ${if (mic) "✔" else "✘"}\nঅ্যাক্সেসিবিলিটি: ${if (a11y) "✔ চালু" else "✘ বন্ধ"}\n" +
+        st.text = "মাইক অনুমতি: ${if (mic) "✔" else "✘"}\nঅ্যাক্সেসিবিলিটি: ${if (a11y) "✔ চালু" else "✘ বন্ধ"}\nসার্ভিস সংযুক্ত: ${if (AgentAccessibility.inst != null) "✔" else "✘ নয় (অ্যাক্সেসিবিলিটি বন্ধ করে আবার চালু করুন)"}\nশেষ দেখা জানালা: ${AgentAccessibility.lastEvt.ifBlank { "এখনো কিছু আসেনি" }}\n" +
             "ব্যাটারি সীমা মুক্ত: ${if (bat) "✔" else "✘"}\nভয়েস মডেল: ${if (WakeWord.ready(this)) "✔ আছে" else "এখনো নামেনি (শোনা চালু করলে নামবে)"}\n" +
             "আপডেট-ডায়ালগ শেষ দেখা: ${Cfg.p(this).getString("last_inst", null)?.let { it + if (Cfg.p(this).getBoolean("last_inst_ok", false)) " (চাপা ✔)" else " (চাপা যায়নি ✘)" } ?: "এখনো দেখা যায়নি"}\n" +
             "Gemini কী: ${if (Cfg.key(this).isNotBlank()) "✔" else "✘ নেই"}\nঅবস্থা: ${if (AgentService.running) AgentService.status.ifBlank { "চলছে" } else "বন্ধ"}\n"

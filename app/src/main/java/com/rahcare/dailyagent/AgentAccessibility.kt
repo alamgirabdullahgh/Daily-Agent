@@ -23,6 +23,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 class AgentAccessibility : AccessibilityService() {
     companion object {
         @Volatile var inst: AgentAccessibility? = null
+        /** শেষ যে অন্য-অ্যাপের ইভেন্ট এসেছে: সার্ভিস আসলে ইভেন্ট পাচ্ছে কি না দেখার জন্য (শুধু স্ট্যাটাসে) */
+        @Volatile var lastEvt = ""
         private val INSTALLERS = setOf(
             "com.google.android.packageinstaller", "com.android.packageinstaller",
             "com.samsung.android.packageinstaller", "com.miui.packageinstaller",
@@ -78,7 +80,9 @@ class AgentAccessibility : AccessibilityService() {
 
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         val pkg = e?.packageName?.toString() ?: return
-        if (!Cfg.autoUpdate(this) || pkg == packageName) return
+        if (pkg == packageName) return
+        if (e.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) lastEvt = pkg + " · " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        if (!Cfg.autoUpdate(this)) return
         // ব্যবহারকারী নিজে "Update/Install" চাপলেও পরে অ্যাপ খোলার জন্য সময় মনে রাখি
         if (e.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
             val src = e.source
@@ -100,12 +104,30 @@ class AgentAccessibility : AccessibilityService() {
     private fun isInstallerPkg(p: String) =
         p in INSTALLERS || p == learned || p.contains("packageinstaller") || p.contains("appdetail") || (p.contains("installer") && !p.contains("vending"))
 
-    private fun label(b: AccessibilityNodeInfo) = (b.text ?: b.contentDescription)?.toString()?.trim()?.lowercase() ?: ""
+    private fun norm(c: CharSequence?): String = c?.toString()?.trim()?.lowercase()?.trim('.', '।', '!', ' ', '\u00a0') ?: ""
 
-    private fun allText(n: AccessibilityNodeInfo?, sb: StringBuilder, depth: Int = 0) {
-        if (n == null || depth > 30 || sb.length > 4000) return
-        n.text?.let { sb.append(it).append('\n') }
-        for (i in 0 until n.childCount) allText(n.getChild(i), sb, depth + 1)
+    private class Lab(val node: AccessibilityNodeInfo, val label: String)
+
+    /** পর্দার সব নোডের ছোট লেখা (নিজের লেখা বা contentDescription) — বোতামের লেখা ভেতরের আলাদা নোডে থাকলেও ধরা পড়ে */
+    private fun collectLabels(n: AccessibilityNodeInfo?, out: MutableList<Lab>, depth: Int = 0) {
+        if (n == null || depth > 40 || out.size > 400) return
+        val l = norm(n.text ?: n.contentDescription)
+        if (l.isNotEmpty() && l.length <= 30) out.add(Lab(n, l))
+        for (i in 0 until n.childCount) collectLabels(n.getChild(i), out, depth + 1)
+    }
+
+    /** এই নোড বা তার কাছের (৪ ধাপ ওপরের) ক্লিকযোগ্য অভিভাবক; না থাকলে null (তখন এটা বোতাম নয়, শুধু লেখা) */
+    private fun clickableOf(n: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var x: AccessibilityNodeInfo? = n; var k = 0
+        while (x != null && k++ < 5) { if (x.isClickable && x.isEnabled) return x; x = x.parent }
+        return if (n.className?.toString()?.endsWith("Button") == true && n.isEnabled) n else null
+    }
+
+    private fun pressNode(n: AccessibilityNodeInfo): Boolean {
+        val c = clickableOf(n) ?: return false
+        if (c.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        val r = Rect(); c.getBoundsInScreen(r)
+        return tap(r.centerX(), r.centerY())
     }
 
     /** পর্দার সব জানালা দেখে ইনস্টল/আপডেটের নিশ্চিত-ডায়ালগ খুঁজে বোতাম চাপে। চাপা হলে true */
@@ -119,24 +141,23 @@ class AgentAccessibility : AccessibilityService() {
             val rp = root.packageName?.toString() ?: continue
             if (rp == packageName) continue
             val installer = isInstallerPkg(rp)
-            val btns = ArrayList<AccessibilityNodeInfo>()
-            collectButtons(root, btns)
-            if (btns.isEmpty()) continue
+            val labs = ArrayList<Lab>()
+            collectLabels(root, labs)
+            if (labs.isEmpty()) continue
             if (!installer) {
                 // অচেনা প্যাকেজ: শুধু "Do you want to update this app?" ধরনের লেখা + Cancel বোতাম থাকলে (Play Store বাদ)
                 if (rp.contains("vending")) continue
-                val sb = StringBuilder(); allText(root, sb)
-                val t = sb.toString().lowercase()
+                val t = labs.joinToString("\n") { it.label }
                 val prompt = PROMPTS.any { t.contains(it) }
-                val hasCancel = btns.any { label(it) in CANCEL }
+                val hasCancel = labs.any { it.label in CANCEL && clickableOf(it.node) != null }
                 if (!prompt || !hasCancel) continue
             }
             Cfg.p(this).edit().putString("last_inst", rp + " · " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(now))).apply()
-            val open = btns.firstOrNull { label(it) in OPEN }
-            if (open != null && click(open)) { lastClick = now; openedAt = now; note(true); return true }
-            val ok = btns.firstOrNull { label(it) in OK }
+            val open = labs.firstOrNull { it.label in OPEN && clickableOf(it.node) != null }
+            if (open != null && pressNode(open.node)) { lastClick = now; openedAt = now; note(true); return true }
+            val ok = labs.firstOrNull { it.label in OK && clickableOf(it.node) != null }
             if (ok != null) {
-                val done = click(ok)
+                val done = pressNode(ok.node)
                 if (done) { lastClick = now; updateClickAt = now; if (!installer) learned = rp }
                 note(done)
                 return done
@@ -146,12 +167,6 @@ class AgentAccessibility : AccessibilityService() {
     }
 
     private fun note(done: Boolean) { Cfg.p(this).edit().putBoolean("last_inst_ok", done).apply() }
-
-    private fun collectButtons(n: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
-        if (n == null) return
-        if ((n.isClickable || n.className?.toString()?.endsWith("Button") == true) && n.isEnabled) out.add(n)
-        for (i in 0 until n.childCount) collectButtons(n.getChild(i), out)
-    }
 
     // ───────── এজেন্টের হাত-চোখ ─────────
     fun currentPackage(): String = try { rootInActiveWindow?.packageName?.toString() ?: "" } catch (_: Exception) { "" }
